@@ -51,6 +51,10 @@ func main() {
 	}
 
 	if len(apiResponse.TimeSlots) > 0 {
-		fmt.Println("found")
+		for _, slot := range apiResponse.TimeSlots {
+			log.Printf("found slot: %s", slot.TimeSlot)
+		}
+	} else {
+		fmt.Println("nothing found")
 	}
 }
