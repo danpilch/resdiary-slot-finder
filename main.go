@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+
+	"github.com/gregdel/pushover"
+	"github.com/sethvargo/go-envconfig"
 )
 
 type ApiResponse struct {
@@ -22,9 +26,28 @@ type ApiResponse struct {
 	StandardAvailabilityMayRequireCreditCard bool  `json:"StandardAvailabilityMayRequireCreditCard"`
 }
 
+type Options struct {
+	DisablePushover   bool   `env:"DISABLE_PUSHOVER,default=false"`
+	PushoverApiKey    string `env:"PUSHOVER_API_KEY,required"`
+	PushoverRecipient string `env:"PUSHOVER_RECIPIENT,required"`
+	ReservationDate   string `env:"RESERVATION_DATE,default=2024-12-21"`
+	RestaurantName    string `env:"RESTAURANT_NAME,default=ChesilRectory"`
+	RestaurantCovers  string `env:"RESTAURANT_COVERS,default=2"`
+}
+
 func main() {
-	date := "2024-12-21"
-	url := "https://booking.resdiary.com/api/Restaurant/ChesilRectory/AvailabilitySearch?date=" + date + "&covers=2&channelCode=ONLINE&areaId=0&availabilityType=Reservation"
+	ctx := context.Background()
+	var o Options
+	if err := envconfig.Process(ctx, &o); err != nil {
+		log.Fatal(err)
+	}
+
+	url := fmt.Sprintf("https://booking.resdiary.com/api/Restaurant/"+
+		"%s/AvailabilitySearch?date=%s&covers=%s"+
+		"&channelCode=ONLINE&areaId=0&availabilityType=Reservation", o.RestaurantName, o.ReservationDate, o.RestaurantCovers)
+
+	app := pushover.New(o.PushoverApiKey)
+	recipient := pushover.NewRecipient(o.PushoverRecipient)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -53,8 +76,15 @@ func main() {
 	if len(apiResponse.TimeSlots) > 0 {
 		for _, slot := range apiResponse.TimeSlots {
 			log.Printf("found slot: %s", slot.TimeSlot)
+			if !o.DisablePushover {
+				message := pushover.NewMessage(fmt.Sprintf("found slot: %s", slot.TimeSlot))
+				_, err := app.SendMessage(message, recipient)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
 		}
 	} else {
-		fmt.Println("nothing found")
+		log.Printf("no slots found at %s for %s", o.RestaurantName, o.ReservationDate)
 	}
 }
