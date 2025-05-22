@@ -59,7 +59,7 @@ type Options struct {
 	PushoverApiKey                   string `env:"PUSHOVER_API_KEY,required"`
 	PushoverRecipient                string `env:"PUSHOVER_RECIPIENT,required"`
 	ReservationDate                  string `env:"RESERVATION_DATE,default=2024-12-21"`
-	RestaurantName                   string `env:"RESTAURANT_NAME,default=ChesilRectory"`
+	RestaurantNames                  string `env:"RESTAURANT_NAMES,default=ChesilRectory"`
 	RestaurantCovers                 string `env:"RESTAURANT_COVERS,default=2"`
 	ReservationIgnoreThresholdHour   int    `env:"RESERVATION_IGNORE_THRESHOLD_HOUR,default=21"` // Ignore slots that are after 21hours
 	ReservationIgnoreThresholdMinute int    `env:"RESERVATION_IGNORE_THRESHOLD_HOUR,default=0"`  // Ignore slots that are after 21hours
@@ -81,53 +81,62 @@ func main() {
 		log.Fatal(err)
 	}
 
-	url := fmt.Sprintf("https://booking.resdiary.com/api/Restaurant/"+
-		"%s/AvailabilitySearch?date=%s&covers=%s"+
-		"&channelCode=ONLINE&areaId=0&availabilityType=Reservation", o.RestaurantName, o.ReservationDate, o.RestaurantCovers)
-
 	app := pushover.New(o.PushoverApiKey)
 	recipient := pushover.NewRecipient(o.PushoverRecipient)
+	restaurants := strings.Split(o.RestaurantNames, ",")
 
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatalf("failed to GET url")
-	}
+	for _, restaurantName := range restaurants {
+		trimmedRestaurantName := strings.TrimSpace(restaurantName)
+		log.Printf("Checking %s", trimmedRestaurantName)
+		url := fmt.Sprintf("https://booking.resdiary.com/api/Restaurant/"+
+			"%s/AvailabilitySearch?date=%s&covers=%s"+
+			"&channelCode=ONLINE&areaId=0&availabilityType=Reservation", trimmedRestaurantName, o.ReservationDate, o.RestaurantCovers)
 
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Error reading response body: %v", err)
-	}
-
-	// Check if the request was successful
-	if resp.StatusCode != http.StatusOK {
-		log.Fatalf("Error: Received non-OK HTTP status: %s", resp.Status)
-	}
-
-	// Parse the JSON response into the struct
-	var apiResponse ApiResponse
-	err = json.Unmarshal(body, &apiResponse)
-	if err != nil {
-		log.Fatalf("Error parsing JSON: %v", err)
-	}
-
-	if len(apiResponse.TimeSlots) > 0 {
-		for _, slot := range apiResponse.TimeSlots {
-			if checkSlotIsValid(slot.TimeSlot.ToTime(), o.ReservationIgnoreThresholdHour, o.ReservationIgnoreThresholdMinute) {
-				log.Printf("found slot: %s", slot.TimeSlot.ToString())
-				if !o.DisablePushover {
-					message := pushover.NewMessage(fmt.Sprintf("found slot: %s", slot.TimeSlot.ToString()))
-					_, err := app.SendMessage(message, recipient)
-					if err != nil {
-						fmt.Println(err)
-					}
-				}
-			} else {
-				log.Printf("Unacceptable timeslot found: %s", slot.TimeSlot.ToString())
-			}
+		resp, err := http.Get(url)
+		if err != nil {
+			log.Printf("Error: failed to GET url %s: %v", url, err)
+			continue
 		}
-	} else {
-		log.Printf("no slots found at %s for %s", o.RestaurantName, o.ReservationDate)
+
+		defer resp.Body.Close()
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Error reading response body for restaurant %s: %v", trimmedRestaurantName, err)
+			continue
+		}
+
+		// Check if the request was successful
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("Error: Received non-OK HTTP status: %s for restaurant %s", resp.Status, trimmedRestaurantName)
+			continue
+		}
+
+		// Parse the JSON response into the struct
+		var apiResponse ApiResponse
+		err = json.Unmarshal(body, &apiResponse)
+		if err != nil {
+			log.Printf("Error parsing JSON for restaurant %s: %v", trimmedRestaurantName, err)
+			continue
+		}
+
+		if len(apiResponse.TimeSlots) > 0 {
+			for _, slot := range apiResponse.TimeSlots {
+				if checkSlotIsValid(slot.TimeSlot.ToTime(), o.ReservationIgnoreThresholdHour, o.ReservationIgnoreThresholdMinute) {
+					log.Printf("found slot at %s: %s", trimmedRestaurantName, slot.TimeSlot.ToString())
+					if !o.DisablePushover {
+						message := pushover.NewMessage(fmt.Sprintf("found slot at %s: %s", trimmedRestaurantName, slot.TimeSlot.ToString()))
+						_, err := app.SendMessage(message, recipient)
+						if err != nil {
+							fmt.Println(err)
+						}
+					}
+				} else {
+					log.Printf("Unacceptable timeslot found at %s: %s", trimmedRestaurantName, slot.TimeSlot.ToString())
+				}
+			}
+		} else {
+			log.Printf("no slots found at %s for %s", trimmedRestaurantName, o.ReservationDate)
+		}
 	}
 }
